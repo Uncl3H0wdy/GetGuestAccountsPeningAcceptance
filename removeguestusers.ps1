@@ -1,37 +1,25 @@
-# Checks if the AzureAD module is installed an imported
-# Check if a current connection to AzureAD exists
-if(!(Get-Module -Name "AzureAD")){
-    Write-Host "Installing and importing the AzureAD module" -ForegroundColor Yellow
-    try{Install-Module AzureAD}
-    catch{Write-Host "Could not install AzureAD module. Please try again." -ForegroundColor Red}
-    try{Import-Module AzureAD}
-    catch{Write-Host "Could not import AzureAD module. Please try again." -ForegroundColor Red}
-    Write-Host "AzureAD module has installed imported successfully" -ForegroundColor Green
-}
+Install-Module Microsoft.Graph
+Connect-MgGraph -Scopes "User.Read.All"
 
-try{
-    Write-Host "Connecting to AzureAD - please see the login prompt" -ForegroundColor Yellow
-    Connect-AzureAD -ErrorAction:SilentlyContinue -WarningAction:SilentlyContinue
-    Write-Host "Connected to AzureAD" -ForegroundColor Green
-}catch{
-    Write-Host "Could not connect to AzureAD. Please try again." -ForegroundColor Red
-    exit
-}
+# Define the date to check (30 days ago)
+$checkDate = (Get-Date).AddDays(-30)
 
-# Set the date for 30 days
-$date = (get-date).AddDays(-30).ToString('yyy-MM-dd hh:mm:ss')
+# Get all guest users
+$guestUsers = Get-MgUser -Filter "userType eq 'Guest'" -All
 
-# Get all active guest accounts
-$guestAccounts = Get-AzureADUser -All $true -Filter "UserType eq 'Guest'"
+# Initialize an array to store guests who haven't accepted the invite
+$guestsNotAccepted = @()
 
-# Loop through each guest account and check if it meets the threshold for deletion
-ForEach ($guestAccount in $guestAccounts){
-    if(($guestAccount.UserState -eq "PendingAcceptance") -and ($guestAccount.ExtensionProperty.createdDateTime -gt "$date")){
+# Loop through the guest users
+foreach ($guest in $guestUsers) {
+    # Get the creation date of the user (which is when the invite was sent)
+    $createdDate = $guest.CreatedDateTime
 
-        # Get the key/value pairs for the Name and Expression properties of each object iteration (N is short for 'Name' and E is short for 'Expression')
-        $deletedUser = Get-AzureADUser -ObjectID $guestAccount.UserPrincipalName | Select-Object @{N='CreatedDateTime';E={$_.ExtensionProperty.createdDateTime}}, @{N='UserPrincipalName';E={$_.UserPrincipalName}}, @{N='DisplayName';E={$_.DisplayName}}, @{N='UserType';E={$_.UserType}}, @{N='UserStateChangedOn';E={$_.UserStateChangedOn}}
-
-        # Export the results to .csv format
-        $deletedUser | Export-Csv -Path C:/temp/PendingGuestAccounts.csv -NoTypeInformation -Append
+    # Check if the guest account is older than 30 days and if the guest has not accepted the invite
+    if ($createdDate -lt $checkDate -and $guest.ExternalUserState -ne "Accepted") {
+        $guestsNotAccepted += $guest
     }
 }
+
+# Output the guest users who have not accepted the invite
+$guestsNotAccepted | Select-Object DisplayName, Mail, UserPrincipalName, CreatedDateTime, ExternalUserState
